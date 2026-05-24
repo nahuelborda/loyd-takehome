@@ -1,0 +1,396 @@
+
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Design - Loyd take-home</title><link rel="stylesheet" href="style.css"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><header class="site-header">  <div class="brand">Loyd take-home . <span class="muted">eval pipeline for <code>_detect_intent</code></span></div>  <nav><a class="" href="index.html">Overview</a><a class="current" href="design.html">Design</a><a class="" href="results.html">Results & Interpretation</a><a class="" href="discoveries.html">Discoveries</a></nav></header><main>
+<h1>Design Document</h1>
+<p class="lede">The eval pipeline for <code>_detect_intent</code>: strategy, scorers,
+how the dataset grows, the failure-mode taxonomy, the production feedback loop, and how
+the approach extends to the other LLM stages. Every section the brief asked for; I folded
+the tooling rationale and the label-space proposal in where they belong.</p>
+
+<div class="toc">
+<strong>Sections</strong>
+<ol>
+<li><a href="#strategy">Eval strategy and the rationale behind it</a></li>
+<li><a href="#scorers">Scorer design - what I measure and why</a></li>
+<li><a href="#labelspace">The label space is a product decision</a></li>
+<li><a href="#dataset">How I'd source and grow the dataset beyond 25</a></li>
+<li><a href="#calibration">Calibration under uncertainty</a></li>
+<li><a href="#taxonomy">The failure-mode taxonomy I'd track</a></li>
+<li><a href="#feedback">How a production feedback loop would work</a></li>
+<li><a href="#flywheel">The distillation flywheel - running a cheap model safely</a></li>
+<li><a href="#extension">How this extends to the other LLM stages</a></li>
+<li><a href="#assumptions">Assumptions, risks, open questions</a></li>
+</ol>
+</div>
+
+<h2 id="strategy"><span class="num">1.</span>Eval strategy and the rationale behind it</h2>
+<p>I designed this as a <strong>calibration instrument, not a benchmark.</strong> With 25 emails
+no metric here is a production estimate. The brief is explicit: <em>"the point is the
+pipeline, not a leaderboard score."</em> What the pipeline must do is surface
+<em>where</em> the classifier fails, <em>why</em>, and with <em>how much confidence</em>
+- and stay honest when the dataset itself doesn't have one correct answer.</p>
+
+<h3>Five design principles</h3>
+<ol>
+<li><strong>Measure the label space, not just performance within it.</strong> If the
+taxonomy is wrong, accuracy against it is a comfortable illusion. 48% of the 25 emails
+are non-clean cases - see §<a href="#labelspace">3</a>.</li>
+<li><strong>Treat uncertainty as signal, not noise.</strong> Genuinely ambiguous emails
+are facts to be measured, not errors to be eliminated. When humans genuinely disagree
+on a label, forcing a single gold label throws away real signal about where the
+boundary is hard.</li>
+<li><strong>No single number.</strong> Per-class metrics, a confusion matrix, calibration -
+never collapse to one accuracy figure that hides which failures occur.</li>
+<li><strong>Every scorer states what it claims to measure</strong> - and how it could be
+fooled. The brief grades exactly this.</li>
+<li><strong>Compose with the pipeline.</strong> The harness has a stage-agnostic contract;
+failure reporting is attributable to <code>_detect_intent</code>, not "the agent."</li>
+</ol>
+
+<h3>Tooling - hand-rolled, deliberately</h3>
+<p>I built a small Python harness - about 700 lines all in, roughly 200 of which is the core harness and the rest is tests - with a clean
+<code>Predictor -> Scorers -> Reporter</code> contract. I surveyed Inspect AI, Braintrust,
+DeepEval, and promptfoo and deliberately didn't use them here. The case grades
+<em>quality of thinking</em>, and a transparent harness keeps every design
+decision visible; framework run-management and dashboards pay off past a few hundred
+examples, not at 25.</p>
+
+<p>One real 2026 governance signal worth naming: <em>promptfoo</em> was acquired by
+OpenAI in March 2026 (TechCrunch, CNBC), and <em>Braintrust</em> disclosed a credentials
+breach in May 2026 (TechCrunch). The hand-rolled harness avoids both the governance and
+hosted-dependency surfaces.</p>
+
+<h3>Prediction method</h3>
+<p>v0 uses a zero-shot LLM call mirroring production (<code>_detect_intent</code> is
+GPT-4.1; I ran against Claude Opus 4.7 via an OpenAI-compatible endpoint). The prompt:</p>
+<ul>
+<li>Includes the label definitions verbatim, so the model has the same taxonomy the
+labeler used.</li>
+<li>Randomises label order per call - models give more weight to whichever label appears
+first in the list, so shuffling neutralises it (the position-bias finding is well-established;
+the fix is one line of code).</li>
+<li>Returns a structured object <code>{label, confidence, rationale}</code>.</li>
+<li>Verbalised confidence - asking the model to state its confidence in words, then
+converting to a number - is treated as a signal worth checking, not a number to trust
+blindly. Its reliability depends heavily on how the question is asked.</li>
+</ul>
+
+<h3>Handling ambiguity - without an "abstain" label</h3>
+<p>I didn't add a seventh "abstain" label. Loyd already has the right mechanism:
+a confidence score plus HITL routing below threshold. <strong>Low confidence
+<em>is</em> the abstain signal</strong>, and I score against that signal. Keeping the eval
+faithful to the production system matters more than testing a classifier that doesn't
+exist.</p>
+
+<h2 id="scorers"><span class="num">2.</span>Scorer design - what we measure and why</h2>
+<p>Five scorers. Each one states a <strong>claim</strong> (what it measures) and an
+<strong>honesty check</strong> (how it could mislead, and what I do about it). This is
+the brief's explicit grading question - <em>"is the scorer measuring what it claims to
+measure?"</em></p>
+
+<h3>2.1 - Per-class P/R/F1 + confusion matrix</h3>
+<p><strong>Claims:</strong> <em>which</em> labels the classifier confuses with <em>which</em>
+- not one aggregate. <strong>Reports:</strong> a 6x6 confusion matrix, per-class P/R/F1,
+macro-F1, micro-F1.</p>
+<p><strong>Honesty check:</strong> the dataset is severely imbalanced
+(<code>schedule</code> n=10, <code>cancel</code> n=1). Micro metrics are dominated by
+<code>schedule</code>; a single accuracy number would hide <code>cancel</code> entirely.
+Macro-F1 is the headline; class metrics with support &lt; 5 are explicitly flagged as
+high-variance.</p>
+
+<h3>2.2 - <code>none</code> / out-of-scope detector</h3>
+<p><strong>Claims:</strong> can the classifier <em>reject</em>? Out-of-scope detection is
+a distinct skill from in-scope sorting - classifiers that do well at routing known intents
+reliably fail on unknown ones. Rejection quality also degrades as the label space grows:
+more labels means more nearby attractors that pull edge cases in rather than letting
+them fall through to <code>none</code>.</p>
+<p><strong>Honesty check:</strong> precision and recall on <code>none</code> are
+<em>different harms</em> and must never be averaged. Low <code>none</code> recall = junk
+acted on (a newsletter handled as a real request). Low <code>none</code> precision = a
+real request silently dropped to <code>none</code>. The eval slices by
+<code>loyd_addressed</code> to separate indirect-path noise (cc carryover, accidental
+forwards) from messages addressed to the agent.</p>
+
+<h3>2.3 - Calibration scorer</h3>
+<p><strong>Claims:</strong> does the confidence score mean what it says - is a 0.9
+really ~90% likely correct? See §<a href="#calibration">5</a> for why this is the highest-stakes
+scorer (it gates Loyd's HITL routing and the &gt;0.95 auto-send bypass).</p>
+<p><strong>Honesty check:</strong> ECE over 25 points is unstable, so I always report
+bin counts; the <em>decision-relevant</em> figure is the &gt;0.95-band precision (errors
+shipping unreviewed).</p>
+
+<h3>2.4 - Ambiguity-aware (acceptable-set) scorer</h3>
+<p><strong>Claims:</strong> on ambiguous inputs, does the model land in the <em>defensible
+set</em> AND stay <em>appropriately unsure</em>?</p>
+<p><strong>Honesty check:</strong> a model that is <em>confidently</em> correct on an
+ambiguous item is still miscalibrated against human uncertainty - it just got lucky. The
+confidence gap (mean conf on <code>clean</code> minus mean conf on <code>ambiguous</code>)
+catches this even when the label is "right".</p>
+
+<h3>2.5 - Routing / operating-point scorer</h3>
+<p><strong>Claims:</strong> at a given confidence threshold, what is the HITL load and
+what is the residual escaped-error rate?</p>
+<p><strong>Honesty check:</strong> this measures a <em>product</em> tradeoff, not model
+quality. Reported as a curve, never a single score, so it cannot be mistaken for "the
+classifier is X% good." It exists to inform where Loyd sets the routing gate.</p>
+
+<h2 id="labelspace"><span class="num">3.</span>The label space is a product decision</h2>
+<p>The brief invites this directly: <em>"Defining the intent label space is a product
+decision as much as engineering - if you find yourself wanting to expand it, walk us
+through how you'd structure that work."</em></p>
+
+<p>The dataset has <strong>5 misfits</strong> - emails that fit no label in the 6 cleanly.
+They are not noise; they are the eval's clearest signal that the taxonomy is incomplete.</p>
+
+<table>
+<tr><th>Email</th><th>What it really is</th><th>Least-wrong of the 6</th><th>What it needs</th></tr>
+<tr><td>E17</td><td>"drop Ben from the meeting" - attendee change</td><td><code>reschedule</code></td><td><code>modify_attendees</code></td></tr>
+<tr><td>E11</td><td>"is this still on?"</td><td><code>query_agenda</code></td><td><code>meeting_query</code></td></tr>
+<tr><td>E19</td><td>"is the meeting Zoom or in person?"</td><td><code>query_agenda</code></td><td><code>meeting_query</code></td></tr>
+<tr><td>E18</td><td>"tell the team I'll be late - don't move anything"</td><td><code>none</code></td><td><code>notify_attendees</code></td></tr>
+<tr><td>E22</td><td>"remind me to send the deal Friday"</td><td><code>block_calendar</code></td><td><code>set_reminder</code></td></tr>
+</table>
+
+<p>The gaps cluster into <strong>two missing categories</strong>: <em>meeting-modify
+operations that don't move time</em> (attendee changes, notifications) and
+<em>information requests about a specific meeting</em> (the agent must <em>answer</em>,
+not <em>act</em>). The current 6 conflate "calendar writes" with "meeting operations"
+and omit "answer about one meeting" entirely.</p>
+
+<h3>The bar - each new label must earn its place</h3>
+<p>Adding labels is not free. OOS detection degrades as the label space grows - more labels
+means more nearby attractors that pull edge cases in rather than letting them fall through
+to <code>none</code>. Three tests every candidate label must clear:</p>
+<ol>
+<li><strong>Recurrence</strong> - non-trivial production frequency.</li>
+<li><strong>Distinct action</strong> - routes the agent to a different handler. Two
+intents that trigger the same downstream don't need separate labels.</li>
+<li><strong>Annotatable</strong> - two annotators can agree on when it applies. If they
+can't, the label is badly defined.</li>
+</ol>
+
+<h3>Proposed v1 changes - graded</h3>
+<table>
+<tr><th>Candidate</th><th>Recommendation</th><th>Covers</th><th>Why</th></tr>
+<tr><td><code>modify_attendees</code></td><td><strong>Add</strong></td><td>E15, E17, E21 (12% of sample)</td><td>Highest-frequency gap; distinct action; cleanly annotatable.</td></tr>
+<tr><td><code>meeting_query</code></td><td><strong>Add</strong></td><td>E11, E19 (8%)</td><td>Distinct handler - the agent must answer; routing to <code>none</code> means silence.</td></tr>
+<tr><td><code>notify_attendees</code></td><td>Conditional</td><td>E18 (4%)</td><td>Genuinely distinct action, but only 1/25 here. Add iff production frequency confirms it.</td></tr>
+<tr><td><code>set_reminder</code></td><td>Re-scope, don't add</td><td>E22 (4%)</td><td>Is "task reminders" even <code>_detect_intent</code>'s scope, or a different product surface? A product call, not an eval call.</td></tr>
+</table>
+
+<p><strong>v1 recommendation:</strong> add <code>modify_attendees</code> and
+<code>meeting_query</code> now (-> 8 labels); hold the other two pending production
+frequency data. Keep flat for v1; past ~10 labels move to a two-tier scheme
+(in-scope vs <code>none</code> first, then fine intent) to protect OOS detection from
+label-count growth.</p>
+
+<h3>The recurring label-space review process</h3>
+<ol>
+<li><strong>Mine.</strong> Cluster two streams: <code>none</code>-bucket messages, and
+HITL Edit/Reject events (rejected drafts where the intent was wrong or missing).</li>
+<li><strong>Propose.</strong> For each cluster: candidate intent, the action it implies,
+estimated frequency.</li>
+<li><strong>Gate.</strong> Apply the three tests above.</li>
+<li><strong>Validate.</strong> Re-label a sample with >=2 annotators; measure
+inter-annotator agreement. Low agreement = kill or redefine.</li>
+<li><strong>Ship.</strong> Version the label space, update the predictor prompt and
+label definitions, extend the eval set, regression-test against the previous version.</li>
+<li><strong>Cadence.</strong> Quarterly; jointly owned by Product (step 3) and the eval
+owner (steps 4-5).</li>
+</ol>
+
+<h2 id="dataset"><span class="num">4.</span>How I'd source and grow the dataset beyond 25</h2>
+<p>25 emails is calibration material. A credible eval set needs to grow along four axes:</p>
+<ol>
+<li><strong>Stratified production sampling (Gmail).</strong> Sample to cover all 6 labels,
+every <code>loyd_addressed</code> stratum, and both thread states. Random sampling would
+drown rare classes - <code>cancel</code> and <code>block_calendar</code> must be
+over-sampled relative to their natural rate.</li>
+<li><strong>Mine the <code>none</code> bucket and HITL Rejects.</strong> Where new
+intents and the hardest cases live. An LLM can mine the <code>none</code> bucket for
+candidate new intent categories from minimal labeled data. This pipeline feeds
+§<a href="#labelspace">3</a>'s label-space review.</li>
+<li><strong>Targeted synthetic generation for rare classes.</strong> Raw LLM generation
+is insufficient - it's too repetitive. A refinement pass lifts data utility and
+diversity. Synthetic data is marked as such and never mixed silently with production.</li>
+<li><strong>Multi-annotator labeling with measured agreement.</strong> Every new batch
+gets >=2 annotators; I'd compute Krippendorff's α and <em>keep</em> it - not just as a
+QA gate but as a standing record of where humans disagree. α is the right choice here:
+it handles missing data and unequal annotator pools; Cohen's κ is sensitive to class
+imbalance and will quietly change which labels look reliable. Disagreement is preserved
+as the <code>ambiguous</code> tier, not voted away.</li>
+</ol>
+
+<p>The eval set is versioned; a held-out slice is rotated to resist contamination as prompts
+and models iterate. Target: a few hundred stratified, versioned, multi-annotated
+examples - the point at which I'd re-survey the framework landscape.</p>
+
+<h2 id="calibration"><span class="num">5.</span>Calibration under uncertainty</h2>
+<p>Loyd's classifier already emits a confidence score. That score is
+<strong>load-bearing</strong> - it drives two live gates:</p>
+<ul>
+<li><strong>Below threshold</strong> -> route to the HITL Approval Gate (user reviews).</li>
+<li><strong>Above 0.95, no conflicts</strong> -> draft auto-sends with <em>no</em> human review.</li>
+</ul>
+
+<p>So calibration error has two distinct, asymmetric costs:</p>
+<table>
+<tr><th>Failure</th><th>Mechanism</th><th>Cost</th></tr>
+<tr><td>Over-confident</td><td>wrong answer scores &gt;0.95</td><td>error auto-sends to an outside party - unguarded</td></tr>
+<tr><td>Under-confident</td><td>correct answer scores low</td><td>needless HITL load; erodes trust in the agent</td></tr>
+</table>
+
+<p>I treat <strong>&gt;0.95-band precision</strong> as the single most important
+number. A global accuracy of 90% is irrelevant if the &gt;0.95 band is 96% precise and
+30% of traffic lands there. What gets measured:</p>
+<ol>
+<li><strong>Reliability</strong> - binned confidence vs empirical accuracy; ECE.</li>
+<li><strong>The auto-send band</strong> - precision at confidence &gt;0.95.</li>
+<li><strong>The HITL band</strong> - of routed messages, what fraction were genuinely wrong.</li>
+<li><strong>The confidence gap</strong> - confidence should be <em>lower</em> on
+<code>ambiguous</code> and <code>misfit</code> tiers than on <code>clean</code>.</li>
+<li><strong>An operating-point sweep</strong> - to recommend where the routing threshold sits.</li>
+</ol>
+
+<p>Once the dataset is large enough to compute a calibration set, I'd replace the single
+threshold I picked by reading the data with a smarter mechanism: instead of routing on one
+cutoff, return a small set of plausible labels per email with a mathematical guarantee
+that the right label is in that set at a chosen confidence level (the conformal prediction
+approach - that guarantee is distribution-free, not a heuristic). The clarification
+question that follows - "here are the two most likely intents, which did you mean?" -
+maps directly onto Loyd's existing Approval Gate.</p>
+
+<h2 id="taxonomy"><span class="num">6.</span>The failure-mode taxonomy I'd track</h2>
+<p>Beyond "correct vs incorrect," I tag every wrong (or unsafely-confident)
+prediction with a failure mode. The taxonomy is grounded in the real 25 emails - each
+category has worked examples - and is built/extended with a measured inter-annotator
+agreement check. I'd follow the MAST template: build from real failure traces, have two
+annotators label them independently, compute agreement. MAST reported κ = 0.88 on a
+14-category multi-agent taxonomy - that's the bar for "the categories are actually
+coherent."</p>
+
+<table>
+<tr><th>#</th><th>Failure mode</th><th>Definition</th><th>Example IDs</th></tr>
+<tr><td>F1</td><td>Label-space misfit</td><td>input fits no label; model forced to pick</td><td>E11, E17, E18, E19, E22</td></tr>
+<tr><td>F2</td><td>Meeting-state confusion</td><td><code>schedule</code> vs <code>reschedule</code> decided without checking whether a meeting is booked</td><td>E02 <-> E16</td></tr>
+<tr><td>F3</td><td>Negation / constraint miss</td><td>explicit "don't" ignored</td><td>E18 ("don't move anything")</td></tr>
+<tr><td>F4</td><td>Decoy vocabulary</td><td>meeting-shaped words with no intent</td><td>E06, E24, E25</td></tr>
+<tr><td>F5</td><td>Indirect-path miss</td><td>cc-carryover / forward not recognised as <code>none</code></td><td>E06, E23, E24, E25</td></tr>
+<tr><td>F6</td><td>Soft-intent miscalibration</td><td>vague social "let's connect" forced to a hard label with high confidence</td><td>E07, E09, E13</td></tr>
+<tr><td>F7</td><td>Thin-context overreach</td><td>terse message answered confidently</td><td>E12 ("next week?")</td></tr>
+<tr><td>F8</td><td>Output / format failure</td><td>model reasoned correctly but emitted malformed output</td><td>(stress-tested)</td></tr>
+<tr><td>F9</td><td>Context blindness</td><td>subject and/or thread state disambiguates the intent, but the model weights only the body and gets it wrong</td><td>E11, E14, E19, E20</td></tr>
+</table>
+
+<p>F8 matters more than it looks: in a 2025 error-analysis study of LLM classification
+failures, <strong>70.8% of failures were parsing issues, not reasoning errors</strong> -
+the model got the logic right but emitted output the parser choked on. Conflating the
+two would send us tuning prompts when the real fix is output handling - so F8 is always
+counted on its own axis.</p>
+
+<h2 id="feedback"><span class="num">7.</span>How a production feedback loop would work</h2>
+<p>Loyd's HITL Approval Gate is exactly the source of structured labels the eval set
+needs. The signals available:</p>
+
+<table>
+<tr><th>Signal</th><th>Source</th><th>Attribution</th></tr>
+<tr><td>HITL <strong>Approve / Edit / Reject</strong></td><td>Approval Gate (user's email reply)</td><td><strong>stage-ish</strong> - Edit/Reject ≈ user correcting the agent</td></tr>
+<tr><td>Booking <strong>success / failure</strong></td><td>calendar outcome</td><td><strong>end-to-end</strong> - conflates all stages</td></tr>
+<tr><td>Explanatory outcome</td><td>"no time found / meeting not needed / needs cancelling"</td><td>mixed - but informative</td></tr>
+</table>
+
+<p><strong>The core nuance:</strong> booking success is an end-to-end signal. A booking
+can fail for reasons that have nothing to do with intent (no mutual slot, downstream
+parse error). I treat booking success as a <em>noisy proxy</em> for <code>_detect_intent</code>
+correctness — not a direct label. The cleanest stage-attributable
+signal is HITL Edit/Reject of the draft - and even that needs a lightweight attribution
+step, because <code>_detect_intent</code> sits upstream of the Draft Generator: a Reject
+means <em>something</em> upstream was wrong, not necessarily the intent.</p>
+
+<pre>log every _detect_intent call -> join to HITL outcome + booking outcome
+        |                              |
+        |              triage: low-confidence, Rejected,
+        |              or annotator-disagreement cases
+        |                              |
+        +----<-- versioned eval set <-- sample + label (>=2 annotators)</pre>
+
+<p>This closes the loop and keeps the eval honest about which stage it is actually measuring.</p>
+
+<h2 id="flywheel"><span class="num">8.</span>The distillation flywheel - running a cheap model safely</h2>
+<p>§<a href="#feedback">7</a>'s feedback loop collects labelled production data. Add one
+stage and it becomes a <em>training</em> loop - the mechanism for running
+<code>_detect_intent</code> on a cheap, fast model without giving up accuracy. Why this
+matters: <code>_detect_intent</code> is a high-volume top-of-funnel call. The
+reasoning-first prompt that fixes the drop-to-<code>none</code> failure costs a longer
+completion on <em>every</em> message. Distillation is how to keep the accuracy and drop
+the cost.</p>
+
+<p><strong>The trap - and why the eval is load-bearing.</strong> Teacher output is
+<em>not</em> automatically good training data. The v0 eval proved the teacher itself is
+wrong on a structured ~16% of cases (drop-to-<code>none</code>), and the cross-checks
+showed the failure is model-general. Distil from raw teacher output and the student
+inherits the teacher's bugs - and if the eval's gold is also teacher-derived, the eval
+will <em>reward</em> the student for reproducing them. That is the same-model caveat,
+baked structurally into a training loop.</p>
+
+<p>So the eval is not a step <em>after</em> distillation - it is the <strong>QA gate
+inside</strong> it:</p>
+
+<pre>teacher (Opus + reasoning prompt) -> candidate label + rationale
+          |
+   eval + HITL filter --> high-confidence clean cases -> training data
+          |               low-conf / ambiguous / misfit -> human review
+          ▼
+   curated corpus -> fine-tune cheap student -> eval validates student
+          ▲                                          |
+          +-------- HITL Edit/Reject corrections <--- production</pre>
+
+<p>Two non-negotiables, both evidenced by this take-home: fix the teacher prompt
+<em>before</em> distilling (the reasoning-prompt A/B did exactly this); the student's test gold
+must be independent of the teacher (or the eval can't see inherited bugs).</p>
+
+<h2 id="extension"><span class="num">9.</span>How this extends to the other LLM stages</h2>
+<p>The <code>Predictor -> Scorer</code> contract is the same for every stage; only the
+scorer changes.</p>
+<ul>
+<li><strong><code>_parse_fields</code></strong> (GPT-4o, ~16 structured fields). Eval =
+per-field scoring: exact match for categoricals, normalised match for
+dates/durations/time-zones, set match for attendees. Same harness, different scorer.</li>
+<li><strong>Validate-answer layer</strong> (downstream, brief p.2). Eval = seed known
+errors and measure precision/recall at catching them. It is itself a classifier.</li>
+<li><strong><code>_generate_email</code></strong> (GPT-5.3, open-ended). Cannot be
+exact-matched - needs an <strong>LLM-as-judge</strong> scorer with a rigorous rubric.
+The requirements are clear: precise per-class criteria dominate reliability more than
+chain-of-thought reasoning, so write the rubric carefully rather than just asking the
+judge to "think step by step"; judges carry measurable biases (position, length, label
+frequency) that must be audited; and a judge must be validated against human
+agreement patterns (using Cohen's κ or similar), not just correlation with one
+ground-truth rater.</li>
+</ul>
+
+<p><strong>Composition.</strong> Errors compound down the pipeline - a wrong intent
+yields a wrong draft yields a wasted HITL review. Stage-isolated evals miss cascade
+behaviour, so alongside the per-stage evals I'd add a small <em>end-to-end</em>
+slice with stage attribution.</p>
+
+<h2 id="assumptions"><span class="num">10.</span>Assumptions, risks, open questions</h2>
+<p><strong>Assumptions made:</strong></p>
+<ul>
+<li>The v0 predictor is zero-shot; production parity is approximate, not exact (I don't
+have Loyd's actual <code>_detect_intent</code> prompt).</li>
+<li><code>gold_label</code>s are v0, single-annotator; <code>ambiguous</code>/<code>misfit</code>
+rows are intentionally contestable.</li>
+<li>I treat confidence as a usable signal; §<a href="#calibration">5</a>'s measurements
+are what will reveal it if it isn't.</li>
+</ul>
+
+<p><strong>Risks:</strong></p>
+<ul>
+<li><strong>n=25.</strong> No metric here is a production estimate. The pipeline is the
+deliverable; the numbers are calibration. §<a href="#dataset">4</a> is the mitigation.</li>
+<li><strong>Verbalised confidence</strong> - asking the model to state its confidence in
+words, then converting to a number - can be unreliable if the prompt doesn't elicit it
+carefully. The prompt is designed for it and §<a href="#calibration">5</a> verifies the
+resulting scores rather than assuming they're well-calibrated.</li>
+</ul>
+
+</main><footer><div class="muted fine">Loyd Applied AI Engineer take-home . Nahuel Borda . 2026</div></footer></body></html>
