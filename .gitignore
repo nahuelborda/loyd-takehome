@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# Env / secrets
+.env
+.env.*
+*.local
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Eval run artifacts
+runs/
+*.log
+logs/
+
+# Engram memory project config — local-only, not for distribution
+.engram/
+
+# Literature PDF cache — kept locally, not committed (see docs/literature-notes.md)
+papers/
+
+# Reference books / large PDFs dropped into the repo dir (filebrowser default destination)
+/*.pdf

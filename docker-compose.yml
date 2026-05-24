@@ -1,0 +1,14 @@
+services:
+  eval:
+    build: .
+    image: loyd-takehome:latest
+    container_name: loyd-eval
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-not-needed}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+    volumes:
+      - ./results:/app/results
+      - ./runs:/app/runs
+    command: >
+      --model ${MODEL:-gpt-4.1}
+      --out results/run

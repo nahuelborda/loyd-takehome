@@ -1,0 +1,176 @@
+
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Overview, Loyd take-home</title><link rel="stylesheet" href="style.css"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><header class="site-header">  <div class="brand">Loyd take-home . <span class="muted">eval pipeline for <code>_detect_intent</code></span></div>  <nav><a class="current" href="index.html">Overview</a><a class="" href="design.html">Design</a><a class="" href="results.html">Results & Interpretation</a><a class="" href="discoveries.html">Discoveries</a></nav></header><main>
+<h1>Evaluating Loyd's <code>_detect_intent</code> classifier</h1>
+<p class="lede">A small evaluation pipeline for the top-of-funnel intent classifier in
+Loyd's scheduling agent. The dataset is 25 deliberately-tricky emails; the eval reports
+where the classifier struggles, why, and what to do about it.</p>
+
+<div class="headline">
+The eval pins the classifier's failures to a single mode, <strong>every email it got
+wrong, it got wrong by predicting <code>none</code></strong>, traces it to a prompt
+that suppressed the model's reasoning, and the harness then validates the fix:
+<strong>a reasoning-first prompt lifts clean accuracy from 11/13 to 13/13.</strong>
+Cross-checks on five independent runs corroborate the failure is real, not a
+same-model artefact.
+</div>
+
+<div class="kv">
+<dt>Primary run</dt><dd>Claude Opus 4.7 . direct prompt</dd>
+<dt>Clean accuracy</dt><dd>11/13 = 0.846</dd>
+<dt>Macro-F1 (all 25)</dt><dd>0.817</dd>
+<dt>ECE</dt><dd>0.116</dd>
+<dt>&gt;0.95 auto-send precision</dt><dd>1.000 (n=8)</dd>
+</div>
+
+<details class="glossary">
+<summary>What the metric names mean (click to open)</summary>
+<dl>
+<dt>Clean accuracy</dt>
+<dd>Accuracy on just the 13 "clean" rows (one obvious correct label per email). The
+strict score, before any credit for either-way answers on ambiguous rows.</dd>
+
+<dt>F1</dt>
+<dd>The harmonic mean of <em>precision</em> (when the model predicts label X, how often
+is it actually X?) and <em>recall</em> (of all the actual X emails, how many did the
+model catch?). Between 0 and 1; high only when both precision and recall are high.</dd>
+
+<dt>Macro-F1</dt>
+<dd>The F1 for each of the 6 labels, averaged with equal weight, so the rare classes
+count as much as the common ones. The alternative, <em>micro</em>-F1, would let
+<code>none</code> (7 examples) dominate <code>cancel</code> (1 example); macro keeps
+the imbalanced label space honest. Caveat: with <code>cancel</code> at n=1, macro is
+high-variance, one prediction swings the score, so the report shows it next to the
+per-class breakdown.</dd>
+
+<dt>ECE, Expected Calibration Error</dt>
+<dd>The gap between what the model says it knows and what it actually gets right. Bucket
+predictions by confidence (0.5-0.7, 0.7-0.9, etc.); in each bucket compare mean
+confidence to actual accuracy; weight by bucket size. Lower is better. 0.0 = perfect
+calibration. Unstable at n=25, so it's reported alongside the reliability bins.</dd>
+
+<dt>&gt;0.95 auto-send precision</dt>
+<dd>Of the predictions the model made at &gt;95% confidence, what fraction were correct.
+This is the slice Loyd's pipeline auto-sends with no human review, so it's the single
+most decision-relevant number. The "auto-send n" is how many predictions landed in
+that band.</dd>
+
+<dt>HITL</dt>
+<dd>Human In The Loop. Loyd's Approval Gate: low-confidence predictions get routed to
+the user to review the draft before send. The routing threshold is what decides which
+ones.</dd>
+
+<dt>label_fit (clean / ambiguous / misfit)</dt>
+<dd>My 3-tier annotation of how well the 6-label space fits each email. <em>Clean</em> =
+one obvious label (13 emails). <em>Ambiguous</em> = two defensible labels, both
+recorded (7 emails). <em>Misfit</em> = no label in the 6 fits (5 emails), the model is
+forced to pick the least-wrong one. Almost half the dataset isn't clean, which is the
+point, it's calibration material, not a leaderboard set.</dd>
+
+<dt>Acceptable-set accuracy</dt>
+<dd>For ambiguous rows, the model is credited for either the gold label OR the
+documented alternate. Sits next to strict accuracy in the report, a model that always
+picks the alternate isn't penalised for the ambiguity tier.</dd>
+</dl>
+</details>
+
+<h2>Design choices the reviewer should know up front</h2>
+
+<p>The brief said <em>"simulate the LLM predictions however you'd like."</em> What I
+picked, and why, so none of this is hidden in a footnote:</p>
+
+<dl class="choices">
+<dt>Gold labels</dt>
+<dd>I labeled the 25 emails myself by reading each one. I used <code>claude-opus-4-7</code>
+as a labelling assistant, it drafted candidate labels and the <code>label_fit</code>
+tier (clean / ambiguous / misfit); I reviewed and finalised every row. So the dataset
+has same-model exposure on the label side, which is the obvious risk
+<em>and the reason for the cross-checks below</em>.</dd>
+
+<dt>Primary predictor (the "v0" run)</dt>
+<dd><code>claude-opus-4-7</code> with a direct prompt: "classify this message, return ONLY
+a JSON object." Same model family as the labeler, on purpose, the closest mirror to
+Loyd's production setup (single LLM call with a confidence score) makes the eval
+methodology directly transferable.</dd>
+
+<dt>The A/B fix tested</dt>
+<dd><code>claude-opus-4-7</code> again, but with a <strong>reasoning-first prompt</strong>:
+"reason step by step, then give the JSON object as the last line." Same model,
+different prompt, which lifted clean accuracy from 11/13 to 13/13. Output in
+<code>results/opus-reasoning/</code>.</dd>
+
+<dt>Cross-checks (to defuse the same-model concern)</dt>
+<dd>Three cross-check runs: <code>claude-sonnet-4-6</code> (within family, for a
+weaker-tier comparison), <code>llama4-scout-17b</code> (Meta, independent family), and
+<code>qwen3.5-122b-a10b</code> (Alibaba, independent family, no-think mode). The two
+independent-family runs, Llama-4 and Qwen, hit the same 0.846 clean accuracy as Opus
+and the same E14 -&gt; <code>none</code> miss. The same-model labeler caveat is
+substantially answered, though the structural fix at scale (split labeler and
+predictor; multi-annotator human gold for the ambiguous tier) is still in the
+dataset-growth plan.</dd>
+</dl>
+
+<h2>What the eval is about</h2>
+<p>Loyd is an AI scheduling assistant. Every inbound message hits <code>_detect_intent</code>
+first, a classifier that drops the message into one of six buckets (<code>schedule</code>,
+<code>reschedule</code>, <code>cancel</code>, <code>query_agenda</code>,
+<code>block_calendar</code>, <code>none</code>). It is the first domino: an error here
+cascades. The take-home asked us to design and implement a way to <em>measure</em>
+whether that classifier is doing a good job, and to surface where and why it fails.</p>
+
+<p>I'm submitting two artefacts: a <strong>design document</strong> (the strategy) and an
+<strong>executable prototype</strong> (the code, the run, the written interpretation).
+Both live on this site, navigable from the top bar.</p>
+
+<h2>Reading order</h2>
+<ol>
+<li><a href="design.html">Design</a>, the eval pipeline strategy. Covers all six
+required sections (eval strategy, scorer design, dataset growth, failure-mode taxonomy,
+production feedback loop, extension to the other LLM stages) plus assumptions and the
+label-space expansion question the brief invited.</li>
+<li><a href="results.html">Results &amp; Interpretation</a>, the prototype outputs and
+what the eval told us: the headline finding, scorer-by-scorer numbers, calibration, the
+fix tested, and the cross-check that addresses the same-model caveat.</li>
+<li><a href="discoveries.html">Discoveries</a>, findings from the runs, pulled out
+as standalone signal.</li>
+</ol>
+
+<h2>The cross-check picture in one chart</h2>
+<p>Every row is one of the 25 emails. Every column is a model run. Cells:
+<span class="legend"><span class="sw ok"></span>correct &nbsp;
+<span class="sw alt"></span>acceptable via alt_label (ambiguous tier) &nbsp;
+<span class="sw miss"></span>wrong</span>. The headline accuracies look similar across
+models, but the per-email patterns reveal what the aggregates hide. Hover any cell for
+the model's confidence.</p>
+
+<div class="cross-check" style="grid-template-columns: 1fr 1fr  1.4fr 1.4fr 1.4fr 1.4fr 1.4fr;"><div class="h">email</div><div class="h">gold</div><div class="h">Claude Opus 4.7<br><span class="fine">direct prompt</span></div><div class="h">Claude Opus 4.7<br><span class="fine">reasoning prompt</span></div><div class="h">Claude Sonnet 4.6<br><span class="fine">direct prompt</span></div><div class="h">Llama-4 Scout 17B<br><span class="fine">Meta, independent family</span></div><div class="h">Qwen 3.5 122B<br><span class="fine">Alibaba, independent family</span></div><div class="c label" title="Hi loyd,
+
+Looking to get a 30-min intro on the books between Reed and Lucas next week re: the slate deal. Zoom is fine. ">E01 <span class="fine">cle</span></div><div class="c gold">schedule</div><div class="c ok" title="conf 0.96">schedule</div><div class="c ok" title="conf 0.97">schedule</div><div class="c ok" title="conf 0.92">schedule</div><div class="c ok" title="conf 0.90">schedule</div><div class="c ok" title="conf 0.95">schedule</div><div class="c label" title="Hi loyd,
+
+Lucas got pulled into a screening — can we push this to later in the week? Thu or Fri would work better.
+
+Than">E02 <span class="fine">cle</span></div><div class="c gold">reschedule</div><div class="c ok" title="conf 0.97">reschedule</div><div class="c ok" title="conf 0.97">reschedule</div><div class="c ok" title="conf 0.97">reschedule</div><div class="c ok" title="conf 0.90">reschedule</div><div class="c ok" title="conf 0.95">reschedule</div><div class="c label" title="loyd,
+
+Gonna have to cancel tomorrow's prep call. Ben's flying out for a label meeting that just came through. Will circ">E03 <span class="fine">cle</span></div><div class="c gold">cancel</div><div class="c ok" title="conf 0.97">cancel</div><div class="c ok" title="conf 0.82">cancel</div><div class="c ok" title="conf 0.95">cancel</div><div class="c ok" title="conf 0.90">cancel</div><div class="c ok" title="conf 0.95">cancel</div><div class="c label" title="what do i have on thursday?">E04 <span class="fine">cle</span></div><div class="c gold">query_agenda</div><div class="c ok" title="conf 0.97">query_agenda</div><div class="c ok" title="conf 0.97">query_agenda</div><div class="c ok" title="conf 0.97">query_agenda</div><div class="c ok" title="conf 0.90">query_agenda</div><div class="c ok" title="conf 0.98">query_agenda</div><div class="c label" title="block monday 2-4 for the screening review pls">E05 <span class="fine">cle</span></div><div class="c gold">block_calendar</div><div class="c ok" title="conf 0.97">block_calendar</div><div class="c ok" title="conf 0.97">block_calendar</div><div class="c ok" title="conf 0.95">block_calendar</div><div class="c ok" title="conf 0.90">block_calendar</div><div class="c ok" title="conf 0.95">block_calendar</div><div class="c label" title="Today's top stories:
+
+1. Indie studio closes $300M co-fi deal with European group — biggest indie close of the year
+2. M">E06 <span class="fine">cle</span></div><div class="c gold">none</div><div class="c ok" title="conf 0.99">none</div><div class="c ok" title="conf 0.99">none</div><div class="c ok" title="conf 0.99">none</div><div class="c ok" title="conf 0.99">none</div><div class="c ok" title="conf 0.95">none</div><div class="c label" title="Hey Reed,
+
+Hannah mentioned you wanted to connect on the slate co-fi. Let me know what makes sense from your end.
+
+Theo">E07 <span class="fine">amb</span></div><div class="c gold">none</div><div class="c ok" title="conf 0.55">none</div><div class="c alt" title="acceptable via alt_label . conf 0.62">schedule</div><div class="c alt" title="acceptable via alt_label . conf 0.72">schedule</div><div class="c alt" title="acceptable via alt_label . conf 0.70">schedule</div><div class="c alt" title="acceptable via alt_label . conf 0.85">schedule</div><div class="c label" title="Sounds good — happy to chat.">E08 <span class="fine">cle</span></div><div class="c gold">schedule</div><div class="c ok" title="conf 0.62">schedule</div><div class="c ok" title="conf 0.78">schedule</div><div class="c ok" title="conf 0.72">schedule</div><div class="c ok" title="conf 0.80">schedule</div><div class="c ok" title="conf 0.85">schedule</div><div class="c label" title="reed — been meaning to circle back on lunch. let me know when you're around, no rush. would love to catch up on the tale">E09 <span class="fine">amb</span></div><div class="c gold">schedule</div><div class="c ok" title="conf 0.72">schedule</div><div class="c ok" title="conf 0.82">schedule</div><div class="c ok" title="conf 0.72">schedule</div><div class="c ok" title="conf 0.70">schedule</div><div class="c ok" title="conf 0.85">schedule</div><div class="c label" title="Hey,
+
+Just wanted to confirm Reed saw the project deck we sent Monday for the Q4 release. Happy to jump on a quick call ">E10 <span class="fine">amb</span></div><div class="c gold">none</div><div class="c ok" title="conf 0.62">none</div><div class="c ok" title="conf 0.70">none</div><div class="c ok" title="conf 0.72">none</div><div class="c ok" title="conf 0.90">none</div><div class="c ok" title="conf 0.85">none</div><div class="c label" title="Quick question — is this still on?">E11 <span class="fine">mis</span></div><div class="c gold">query_agenda</div><div class="c miss" title="conf 0.62">none</div><div class="c ok" title="conf 0.55">query_agenda</div><div class="c ok" title="conf 0.72">query_agenda</div><div class="c ok" title="conf 0.80">query_agenda</div><div class="c ok" title="conf 0.85">query_agenda</div><div class="c label" title="next week?">E12 <span class="fine">amb</span></div><div class="c gold">schedule</div><div class="c ok" title="conf 0.60">schedule</div><div class="c ok" title="conf 0.85">schedule</div><div class="c alt" title="acceptable via alt_label . conf 0.62">reschedule</div><div class="c ok" title="conf 0.70">schedule</div><div class="c ok" title="conf 0.85">schedule</div><div class="c label" title="reed — wanted to circle back on the co-fi deal we kicked around last quarter. would be great to catch up in person when ">E13 <span class="fine">amb</span></div><div class="c gold">schedule</div><div class="c ok" title="conf 0.78">schedule</div><div class="c ok" title="conf 0.88">schedule</div><div class="c ok" title="conf 0.85">schedule</div><div class="c ok" title="conf 0.80">schedule</div><div class="c ok" title="conf 0.90">schedule</div><div class="c label" title="Let me check with my team and get back to you tomorrow — we're juggling a few release windows.">E14 <span class="fine">cle</span></div><div class="c gold">schedule</div><div class="c miss" title="conf 0.78">none</div><div class="c ok" title="conf 0.82">schedule</div><div class="c miss" title="conf 0.87">none</div><div class="c miss" title="conf 0.80">none</div><div class="c miss" title="conf 0.85">none</div><div class="c label" title="Hi loyd, looping in Hannah from our side as well — she'll be the lead on this and should be on the meeting.
+
+Thanks, Ali">E15 <span class="fine">amb</span></div><div class="c gold">schedule</div><div class="c ok" title="conf 0.78">schedule</div><div class="c ok" title="conf 0.82">schedule</div><div class="c miss" title="conf 0.45">reschedule</div><div class="c ok" title="conf 0.90">schedule</div><div class="c ok" title="conf 0.90">schedule</div><div class="c label" title="Hey, none of those work — Maya's on the European leg through end of month. Can you share times for the first week of Jun">E16 <span class="fine">cle</span></div><div class="c gold">schedule</div><div class="c ok" title="conf 0.72">schedule</div><div class="c ok" title="conf 0.88">schedule</div><div class="c miss" title="conf 0.82">reschedule</div><div class="c miss" title="conf 0.90">reschedule</div><div class="c miss" title="conf 0.90">reschedule</div><div class="c label" title="actually ben isn't going to make this one — he's on a label call. just keep it as me and alice.">E17 <span class="fine">mis</span></div><div class="c gold">reschedule</div><div class="c ok" title="conf 0.55">reschedule</div><div class="c ok" title="conf 0.55">reschedule</div><div class="c ok" title="conf 0.41">reschedule</div><div class="c ok" title="conf 0.80">reschedule</div><div class="c ok" title="conf 0.75">reschedule</div><div class="c label" title="Can you send a heads up to the team that I'll be 10 min late tomorrow? Coming off another call. Don't move anything, jus">E18 <span class="fine">mis</span></div><div class="c gold">none</div><div class="c ok" title="conf 0.82">none</div><div class="c ok" title="conf 0.78">none</div><div class="c ok" title="conf 0.82">none</div><div class="c ok" title="conf 0.80">none</div><div class="c ok" title="conf 0.85">none</div><div class="c label" title="Just confirming — is the meeting Zoom or in person? Lucas needs to know for prep.">E19 <span class="fine">mis</span></div><div class="c gold">query_agenda</div><div class="c miss" title="conf 0.78">none</div><div class="c miss" title="conf 0.60">none</div><div class="c miss" title="conf 0.82">none</div><div class="c ok" title="conf 0.80">query_agenda</div><div class="c miss" title="conf 0.85">none</div><div class="c label" title="Locked in. See you Wednesday.">E20 <span class="fine">cle</span></div><div class="c gold">schedule</div><div class="c miss" title="conf 0.82">none</div><div class="c ok" title="conf 0.85">schedule</div><div class="c miss" title="conf 0.72">none</div><div class="c ok" title="conf 0.90">schedule</div><div class="c ok" title="conf 0.85">schedule</div><div class="c label" title="Tuesday 2pm doesn't work for me but let me find someone else from our side to take it. Will let you know who.">E21 <span class="fine">amb</span></div><div class="c gold">schedule</div><div class="c alt" title="acceptable via alt_label . conf 0.55">reschedule</div><div class="c miss" title="conf 0.55">none</div><div class="c alt" title="acceptable via alt_label . conf 0.52">reschedule</div><div class="c alt" title="acceptable via alt_label . conf 0.80">reschedule</div><div class="c alt" title="acceptable via alt_label . conf 0.85">reschedule</div><div class="c label" title="remind me to send the executed deal to alice on friday">E22 <span class="fine">mis</span></div><div class="c gold">block_calendar</div><div class="c ok" title="conf 0.45">block_calendar</div><div class="c ok" title="conf 0.50">block_calendar</div><div class="c miss" title="conf 0.82">none</div><div class="c miss" title="conf 0.60">schedule</div><div class="c ok" title="conf 0.75">block_calendar</div><div class="c label" title="Hi Reed Martin,
+
+Ben Carter has requested your signature on a document: 'Talent Representation Agreement — 2026'.
+
+[Revi">E23 <span class="fine">cle</span></div><div class="c gold">none</div><div class="c ok" title="conf 0.98">none</div><div class="c ok" title="conf 0.98">none</div><div class="c ok" title="conf 0.99">none</div><div class="c ok" title="conf 0.90">none</div><div class="c ok" title="conf 0.95">none</div><div class="c label" title="Hi Reed,
+
+We've received your submission for Project SR (Director: M. Cleves). Programming committee meets in the next 4">E24 <span class="fine">cle</span></div><div class="c gold">none</div><div class="c ok" title="conf 0.95">none</div><div class="c ok" title="conf 0.97">none</div><div class="c ok" title="conf 0.97">none</div><div class="c ok" title="conf 0.90">none</div><div class="c ok" title="conf 0.95">none</div><div class="c label" title="reed — wanted to say great work on the slate pitch last night. team is buzzing about the second-window project. talk soo">E25 <span class="fine">cle</span></div><div class="c gold">none</div><div class="c ok" title="conf 0.97">none</div><div class="c ok" title="conf 0.92">none</div><div class="c ok" title="conf 0.97">none</div><div class="c ok" title="conf 0.90">none</div><div class="c ok" title="conf 0.95">none</div></div>
+
+<p class="fine">Two of these models share an exact clean accuracy (0.846) but fail on
+<em>different</em> emails, aggregate metrics hide structure that the per-email view
+makes visible. I built the eval to surface that, not hide it.</p>
+
+</main><footer><div class="muted fine">Loyd Applied AI Engineer take-home . Nahuel Borda . 2026</div></footer></body></html>
