@@ -10,8 +10,8 @@ I'm shipping the writeup as a small static site. It's the primary deliverable.
 - **Hosted: <https://nahuelborda.github.io/loyd-takehome/>** — no install, just open
   in a browser.
 - Local: **[`site/index.html`](site/index.html)** — clone the repo and open the file.
-  Four linked pages in the top nav: **Overview · Design · Results & Interpretation ·
-  Discoveries**.
+  Five linked pages in the top nav: **Overview · Design · Results & Interpretation ·
+  Discoveries · Conclusions**.
 - Markdown sources of truth: **[`docs/design-document.md`](docs/design-document.md)**
   and **[`results/interpretation.md`](results/interpretation.md)**.
 

@@ -30,3 +30,4 @@ papers/
 
 # Reference books / large PDFs dropped into the repo dir (filebrowser default destination)
 /*.pdf
+.gstack/

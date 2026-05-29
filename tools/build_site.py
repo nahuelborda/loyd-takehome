@@ -285,7 +285,8 @@ def fmt(x, nd=3):
 def header_nav(current: str, title: str) -> str:
     pages = [("index.html", "Overview"), ("design.html", "Design"),
              ("results.html", "Results & Interpretation"),
-             ("discoveries.html", "Discoveries")]
+             ("discoveries.html", "Discoveries"),
+             ("conclusions.html", "Conclusions")]
     nav = "".join(
         f'<a class="{"current" if href == current else ""}" href="{href}">{label}</a>'
         for href, label in pages
@@ -995,6 +996,58 @@ resulting scores rather than assuming they're well-calibrated.</li>
     (SITE / "design.html").write_text(body, encoding="utf-8")
 
 
+# ---------- coverage.html ----------
+
+def write_coverage():
+    body = f"""\
+{header_nav("conclusions.html", "Conclusions")}
+
+<h1>What the brief asked, and my answer</h1>
+<p class="lede">The brief asked the design doc to cover six things, plus a question about
+the labels. Here's each one in plain words, with a link if you want the deep version.</p>
+
+<table>
+<tr><th>What they asked</th><th>My answer, in plain words</th><th>Where</th></tr>
+
+<tr><td><strong>What's your eval strategy, and why?</strong></td>
+<td>Don't just ask "what percent did it get right?". Build something that tells you <em>where</em> it breaks, <em>why</em>, and <em>how sure it was</em> when it was wrong. Almost half the test emails don't fit the labels cleanly, so a single score would lie to you. So I grade the easy ones, the could-go-either-way ones, and the don't-fit-at-all ones separately.</td>
+<td><a href="design.html#strategy">Design &sect;1</a></td></tr>
+
+<tr><td><strong>What are you measuring, and why?</strong></td>
+<td>Five little measuring tools. One spots which labels get mixed up with which. One checks it correctly says "not my job" to junk mail. One checks that when it says "90% sure" it's actually right about 90% of the time. One is fair to the genuinely ambiguous emails. One shows when it's safe to send on its own vs ask a human. And each tool says, in plain words, what it measures and how it could fool you.</td>
+<td><a href="design.html#scorers">Design &sect;2</a></td></tr>
+
+<tr><td><strong>How would you grow the dataset past 25?</strong></td>
+<td>Grow it from real misses. The emails it can't label are exactly where the missing categories hide. Have two people label each new one, measure how often they actually agree, and keep the ones they argue about flagged as "genuinely ambiguous" instead of forcing a single answer.</td>
+<td><a href="design.html#dataset">Design &sect;4</a></td></tr>
+
+<tr><td><strong>What failure modes would you track?</strong></td>
+<td>Nine named ways it can go wrong, each with a real example from the 25 emails. That way when something breaks you can say "ah, failure type 2 got worse this week" instead of just "the score dropped". One of the nine I discovered while building this.</td>
+<td><a href="design.html#taxonomy">Design &sect;6</a></td></tr>
+
+<tr><td><strong>How would production feed back into the eval?</strong></td>
+<td>Every time a human approves, edits, or rejects what Loyd drafted, that's a free grade. Log it, connect it back to what the classifier guessed, and you learn which mistakes were the classifier's fault vs something further down the line. Those edits become next month's test set, for free.</td>
+<td><a href="design.html#feedback">Design &sect;7</a></td></tr>
+
+<tr><td><strong>How does this extend to the other AI steps?</strong></td>
+<td>Same plumbing. The next step (pulling out the meeting details) is still mostly black-and-white, so it plugs straight in. The step after (writing the actual email) is fuzzy and open-ended, so that one needs a model grading another model's writing, which is where an off-the-shelf tool finally earns its keep.</td>
+<td><a href="design.html#extension">Design &sect;9</a></td></tr>
+
+<tr><td><strong>Would you change the labels?</strong></td>
+<td>The 5 emails that fit nothing aren't garbage, they're telling you what's missing. They group into four new buttons the system should have: ask about a meeting, change who's invited, send a heads-up, and set a reminder. I'd add one only if it happens a lot <em>and</em> there's an action behind it, then re-test to make sure adding it doesn't break the existing labels.</td>
+<td><a href="design.html#labelspace">Design &sect;3</a></td></tr>
+</table>
+
+<p class="fine">The brief also asked for working code: a guess on each of the 25 emails, at
+least one scorer, readable output, and a short write-up of what it all means. That's in
+the repo (<code>run_eval.py</code> + <code>detect_intent_eval/</code>) and on the
+<a href="results.html">Results &amp; Interpretation</a> page.</p>
+
+{footer()}
+"""
+    (SITE / "conclusions.html").write_text(body, encoding="utf-8")
+
+
 # ---------- results.html ----------
 
 def write_results(emails, runs, primary_key, m):
@@ -1408,6 +1461,7 @@ def main():
     write_design()
     write_results(emails, runs, primary_key, m)
     write_discoveries()
+    write_coverage()
     print("html pages written:", *sorted(p.name for p in SITE.glob("*.html")))
 
 if __name__ == "__main__":
