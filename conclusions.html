@@ -1,14 +1,14 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Conclusions - Loyd take-home</title><link rel="stylesheet" href="style.css"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><header class="site-header">  <div class="brand">Loyd take-home . <span class="muted">eval pipeline for <code>_detect_intent</code></span></div>  <nav><a class="" href="index.html">Overview</a><a class="" href="design.html">Design</a><a class="" href="results.html">Results & Interpretation</a><a class="" href="discoveries.html">Discoveries</a><a class="current" href="conclusions.html">Conclusions</a></nav></header><main>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Conclusions, Loyd take-home</title><link rel="stylesheet" href="style.css"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><header class="site-header">  <div class="brand">Loyd take-home . <span class="muted">eval pipeline for <code>_detect_intent</code></span></div>  <nav><a class="" href="index.html">Overview</a><a class="" href="design.html">Design</a><a class="" href="results.html">Results & Interpretation</a><a class="" href="discoveries.html">Discoveries</a><a class="current" href="conclusions.html">Conclusions</a></nav></header><main>
 
-<h1>What the brief asked, and our answer</h1>
+<h1>What the brief asked, and my answer</h1>
 <p class="lede">The brief asked the design doc to cover six things, plus a question about
 the labels. Here's each one in plain words, with a link if you want the deep version.</p>
 
 <table>
-<tr><th>What they asked</th><th>Our answer, in plain words</th><th>Where</th></tr>
+<tr><th>What they asked</th><th>My answer, in plain words</th><th>Where</th></tr>
 
 <tr><td><strong>What's your eval strategy, and why?</strong></td>
-<td>Don't just ask "what percent did it get right?". Build something that tells you <em>where</em> it breaks, <em>why</em>, and <em>how sure it was</em> when it was wrong. Almost half the test emails don't fit the labels cleanly, so a single score would lie to you. So we grade the easy ones, the could-go-either-way ones, and the don't-fit-at-all ones separately.</td>
+<td>Don't just ask "what percent did it get right?". Build something that tells you <em>where</em> it breaks, <em>why</em>, and <em>how sure it was</em> when it was wrong. Almost half the test emails don't fit the labels cleanly, so a single score would lie to you. So I grade the easy ones, the could-go-either-way ones, and the don't-fit-at-all ones separately.</td>
 <td><a href="design.html#strategy">Design &sect;1</a></td></tr>
 
 <tr><td><strong>What are you measuring, and why?</strong></td>
@@ -20,7 +20,7 @@ the labels. Here's each one in plain words, with a link if you want the deep ver
 <td><a href="design.html#dataset">Design &sect;4</a></td></tr>
 
 <tr><td><strong>What failure modes would you track?</strong></td>
-<td>Nine named ways it can go wrong, each with a real example from the 25 emails. That way when something breaks you can say "ah, failure type 2 got worse this week" instead of just "the score dropped". One of the nine we actually discovered while building this.</td>
+<td>Nine named ways it can go wrong, each with a real example from the 25 emails. That way when something breaks you can say "ah, failure type 2 got worse this week" instead of just "the score dropped". One of the nine I discovered while building this.</td>
 <td><a href="design.html#taxonomy">Design &sect;6</a></td></tr>
 
 <tr><td><strong>How would production feed back into the eval?</strong></td>
@@ -28,11 +28,11 @@ the labels. Here's each one in plain words, with a link if you want the deep ver
 <td><a href="design.html#feedback">Design &sect;7</a></td></tr>
 
 <tr><td><strong>How does this extend to the other AI steps?</strong></td>
-<td>Same plumbing. The next step (pulling out the meeting details) is still mostly black-and-white, so it plugs straight in. The step after (writing the actual email) is fuzzy and open-ended, so that one needs a model grading another model's writing - which is where an off-the-shelf tool finally earns its keep.</td>
+<td>Same plumbing. The next step (pulling out the meeting details) is still mostly black-and-white, so it plugs straight in. The step after (writing the actual email) is fuzzy and open-ended, so that one needs a model grading another model's writing, which is where an off-the-shelf tool finally earns its keep.</td>
 <td><a href="design.html#extension">Design &sect;9</a></td></tr>
 
 <tr><td><strong>Would you change the labels?</strong></td>
-<td>The 5 emails that fit nothing aren't garbage - they're telling you what's missing. They group into four new buttons the system should have: ask about a meeting, change who's invited, send a heads-up, and set a reminder. We'd add one only if it happens a lot <em>and</em> there's an action behind it, then re-test to make sure adding it doesn't break the labels we already have.</td>
+<td>The 5 emails that fit nothing aren't garbage, they're telling you what's missing. They group into four new buttons the system should have: ask about a meeting, change who's invited, send a heads-up, and set a reminder. I'd add one only if it happens a lot <em>and</em> there's an action behind it, then re-test to make sure adding it doesn't break the labels we already have.</td>
 <td><a href="design.html#labelspace">Design &sect;3</a></td></tr>
 </table>
 

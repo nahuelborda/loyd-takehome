@@ -1,13 +1,13 @@
 
-<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Overview - Loyd take-home</title><link rel="stylesheet" href="style.css"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><header class="site-header">  <div class="brand">Loyd take-home . <span class="muted">eval pipeline for <code>_detect_intent</code></span></div>  <nav><a class="current" href="index.html">Overview</a><a class="" href="design.html">Design</a><a class="" href="results.html">Results & Interpretation</a><a class="" href="discoveries.html">Discoveries</a><a class="" href="conclusions.html">Conclusions</a></nav></header><main>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Overview, Loyd take-home</title><link rel="stylesheet" href="style.css"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><header class="site-header">  <div class="brand">Loyd take-home . <span class="muted">eval pipeline for <code>_detect_intent</code></span></div>  <nav><a class="current" href="index.html">Overview</a><a class="" href="design.html">Design</a><a class="" href="results.html">Results & Interpretation</a><a class="" href="discoveries.html">Discoveries</a><a class="" href="conclusions.html">Conclusions</a></nav></header><main>
 <h1>Evaluating Loyd's <code>_detect_intent</code> classifier</h1>
 <p class="lede">A small evaluation pipeline for the top-of-funnel intent classifier in
 Loyd's scheduling agent. The dataset is 25 deliberately-tricky emails; the eval reports
 where the classifier struggles, why, and what to do about it.</p>
 
 <div class="headline">
-The eval pins the classifier's failures to a single mode - <strong>every email it got
-wrong, it got wrong by predicting <code>none</code></strong> - traces it to a prompt
+The eval pins the classifier's failures to a single mode, <strong>every email it got
+wrong, it got wrong by predicting <code>none</code></strong>, traces it to a prompt
 that suppressed the model's reasoning, and the harness then validates the fix:
 <strong>a reasoning-first prompt lifts clean accuracy from 11/13 to 13/13.</strong>
 Cross-checks on five independent runs corroborate the failure is real, not a
@@ -35,14 +35,14 @@ is it actually X?) and <em>recall</em> (of all the actual X emails, how many did
 model catch?). Between 0 and 1; high only when both precision and recall are high.</dd>
 
 <dt>Macro-F1</dt>
-<dd>The F1 for each of the 6 labels, averaged with equal weight - so the rare classes
+<dd>The F1 for each of the 6 labels, averaged with equal weight, so the rare classes
 count as much as the common ones. The alternative, <em>micro</em>-F1, would let
 <code>none</code> (7 examples) dominate <code>cancel</code> (1 example); macro keeps
 the imbalanced label space honest. Caveat: with <code>cancel</code> at n=1, macro is
-high-variance - one prediction swings the score, so the report shows it next to the
+high-variance, one prediction swings the score, so the report shows it next to the
 per-class breakdown.</dd>
 
-<dt>ECE - Expected Calibration Error</dt>
+<dt>ECE, Expected Calibration Error</dt>
 <dd>The gap between what the model says it knows and what it actually gets right. Bucket
 predictions by confidence (0.5-0.7, 0.7-0.9, etc.); in each bucket compare mean
 confidence to actual accuracy; weight by bucket size. Lower is better. 0.0 = perfect
@@ -50,7 +50,7 @@ calibration. Unstable at n=25, so it's reported alongside the reliability bins.<
 
 <dt>&gt;0.95 auto-send precision</dt>
 <dd>Of the predictions the model made at &gt;95% confidence, what fraction were correct.
-This is the slice Loyd's pipeline auto-sends with no human review - so it's the single
+This is the slice Loyd's pipeline auto-sends with no human review, so it's the single
 most decision-relevant number. The "auto-send n" is how many predictions landed in
 that band.</dd>
 
@@ -62,13 +62,13 @@ ones.</dd>
 <dt>label_fit (clean / ambiguous / misfit)</dt>
 <dd>My 3-tier annotation of how well the 6-label space fits each email. <em>Clean</em> =
 one obvious label (13 emails). <em>Ambiguous</em> = two defensible labels, both
-recorded (7 emails). <em>Misfit</em> = no label in the 6 fits (5 emails) - the model is
+recorded (7 emails). <em>Misfit</em> = no label in the 6 fits (5 emails), the model is
 forced to pick the least-wrong one. Almost half the dataset isn't clean, which is the
-point - it's calibration material, not a leaderboard set.</dd>
+point, it's calibration material, not a leaderboard set.</dd>
 
 <dt>Acceptable-set accuracy</dt>
 <dd>For ambiguous rows, the model is credited for either the gold label OR the
-documented alternate. Sits next to strict accuracy in the report - a model that always
+documented alternate. Sits next to strict accuracy in the report, a model that always
 picks the alternate isn't penalised for the ambiguity tier.</dd>
 </dl>
 </details>
@@ -76,33 +76,33 @@ picks the alternate isn't penalised for the ambiguity tier.</dd>
 <h2>Design choices the reviewer should know up front</h2>
 
 <p>The brief said <em>"simulate the LLM predictions however you'd like."</em> What I
-picked, and why - so none of this is hidden in a footnote:</p>
+picked, and why, so none of this is hidden in a footnote:</p>
 
 <dl class="choices">
 <dt>Gold labels</dt>
 <dd>I labeled the 25 emails myself by reading each one. I used <code>claude-opus-4-7</code>
-as a labelling assistant - it drafted candidate labels and the <code>label_fit</code>
+as a labelling assistant, it drafted candidate labels and the <code>label_fit</code>
 tier (clean / ambiguous / misfit); I reviewed and finalised every row. So the dataset
 has same-model exposure on the label side, which is the obvious risk
 <em>and the reason for the cross-checks below</em>.</dd>
 
 <dt>Primary predictor (the "v0" run)</dt>
 <dd><code>claude-opus-4-7</code> with a direct prompt: "classify this message, return ONLY
-a JSON object." Same model family as the labeler, on purpose - the closest mirror to
+a JSON object." Same model family as the labeler, on purpose, the closest mirror to
 Loyd's production setup (single LLM call with a confidence score) makes the eval
 methodology directly transferable.</dd>
 
 <dt>The A/B fix tested</dt>
 <dd><code>claude-opus-4-7</code> again, but with a <strong>reasoning-first prompt</strong>:
 "reason step by step, then give the JSON object as the last line." Same model,
-different prompt - which lifted clean accuracy from 11/13 to 13/13. Output in
+different prompt, which lifted clean accuracy from 11/13 to 13/13. Output in
 <code>results/opus-reasoning/</code>.</dd>
 
 <dt>Cross-checks (to defuse the same-model concern)</dt>
 <dd>Three cross-check runs: <code>claude-sonnet-4-6</code> (within family, for a
 weaker-tier comparison), <code>llama4-scout-17b</code> (Meta, independent family), and
 <code>qwen3.5-122b-a10b</code> (Alibaba, independent family, no-think mode). The two
-independent-family runs - Llama-4 and Qwen - hit the same 0.846 clean accuracy as Opus
+independent-family runs, Llama-4 and Qwen, hit the same 0.846 clean accuracy as Opus
 and the same E14 -&gt; <code>none</code> miss. The same-model labeler caveat is
 substantially answered, though the structural fix at scale (split labeler and
 predictor; multi-annotator human gold for the ambiguous tier) is still in the
@@ -111,7 +111,7 @@ dataset-growth plan.</dd>
 
 <h2>What the eval is about</h2>
 <p>Loyd is an AI scheduling assistant. Every inbound message hits <code>_detect_intent</code>
-first - a classifier that drops the message into one of six buckets (<code>schedule</code>,
+first, a classifier that drops the message into one of six buckets (<code>schedule</code>,
 <code>reschedule</code>, <code>cancel</code>, <code>query_agenda</code>,
 <code>block_calendar</code>, <code>none</code>). It is the first domino: an error here
 cascades. The take-home asked us to design and implement a way to <em>measure</em>
@@ -123,14 +123,14 @@ Both live on this site, navigable from the top bar.</p>
 
 <h2>Reading order</h2>
 <ol>
-<li><a href="design.html">Design</a> - the eval pipeline strategy. Covers all six
+<li><a href="design.html">Design</a>, the eval pipeline strategy. Covers all six
 required sections (eval strategy, scorer design, dataset growth, failure-mode taxonomy,
 production feedback loop, extension to the other LLM stages) plus assumptions and the
 label-space expansion question the brief invited.</li>
-<li><a href="results.html">Results &amp; Interpretation</a> - the prototype outputs and
+<li><a href="results.html">Results &amp; Interpretation</a>, the prototype outputs and
 what the eval told us: the headline finding, scorer-by-scorer numbers, calibration, the
 fix tested, and the cross-check that addresses the same-model caveat.</li>
-<li><a href="discoveries.html">Discoveries</a> - findings from the runs, pulled out
+<li><a href="discoveries.html">Discoveries</a>, findings from the runs, pulled out
 as standalone signal.</li>
 </ol>
 
@@ -139,7 +139,7 @@ as standalone signal.</li>
 <span class="legend"><span class="sw ok"></span>correct &nbsp;
 <span class="sw alt"></span>acceptable via alt_label (ambiguous tier) &nbsp;
 <span class="sw miss"></span>wrong</span>. The headline accuracies look similar across
-models - but the per-email patterns reveal what the aggregates hide. Hover any cell for
+models, but the per-email patterns reveal what the aggregates hide. Hover any cell for
 the model's confidence.</p>
 
 <div class="cross-check" style="grid-template-columns: 1fr 1fr  1.4fr 1.4fr 1.4fr 1.4fr 1.4fr;"><div class="h">email</div><div class="h">gold</div><div class="h">Claude Opus 4.7<br><span class="fine">direct prompt</span></div><div class="h">Claude Opus 4.7<br><span class="fine">reasoning prompt</span></div><div class="h">Claude Sonnet 4.6<br><span class="fine">direct prompt</span></div><div class="h">Llama-4 Scout 17B<br><span class="fine">Meta, independent family</span></div><div class="h">Qwen 3.5 122B<br><span class="fine">Alibaba, independent family</span></div><div class="c label" title="Hi loyd,
@@ -170,7 +170,7 @@ Ben Carter has requested your signature on a document: 'Talent Representation Ag
 We've received your submission for Project SR (Director: M. Cleves). Programming committee meets in the next 4">E24 <span class="fine">cle</span></div><div class="c gold">none</div><div class="c ok" title="conf 0.95">none</div><div class="c ok" title="conf 0.97">none</div><div class="c ok" title="conf 0.97">none</div><div class="c ok" title="conf 0.90">none</div><div class="c ok" title="conf 0.95">none</div><div class="c label" title="reed — wanted to say great work on the slate pitch last night. team is buzzing about the second-window project. talk soo">E25 <span class="fine">cle</span></div><div class="c gold">none</div><div class="c ok" title="conf 0.97">none</div><div class="c ok" title="conf 0.92">none</div><div class="c ok" title="conf 0.97">none</div><div class="c ok" title="conf 0.90">none</div><div class="c ok" title="conf 0.95">none</div></div>
 
 <p class="fine">Two of these models share an exact clean accuracy (0.846) but fail on
-<em>different</em> emails - aggregate metrics hide structure that the per-email view
+<em>different</em> emails, aggregate metrics hide structure that the per-email view
 makes visible. I built the eval to surface that, not hide it.</p>
 
 </main><footer><div class="muted fine">Loyd Applied AI Engineer take-home . Nahuel Borda . 2026</div></footer></body></html>

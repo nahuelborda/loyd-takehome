@@ -1,7 +1,7 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Discoveries - Loyd take-home</title><link rel="stylesheet" href="style.css"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><header class="site-header">  <div class="brand">Loyd take-home . <span class="muted">eval pipeline for <code>_detect_intent</code></span></div>  <nav><a class="" href="index.html">Overview</a><a class="" href="design.html">Design</a><a class="" href="results.html">Results & Interpretation</a><a class="current" href="discoveries.html">Discoveries</a><a class="" href="conclusions.html">Conclusions</a></nav></header><main>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Discoveries, Loyd take-home</title><link rel="stylesheet" href="style.css"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><header class="site-header">  <div class="brand">Loyd take-home . <span class="muted">eval pipeline for <code>_detect_intent</code></span></div>  <nav><a class="" href="index.html">Overview</a><a class="" href="design.html">Design</a><a class="" href="results.html">Results & Interpretation</a><a class="current" href="discoveries.html">Discoveries</a><a class="" href="conclusions.html">Conclusions</a></nav></header><main>
 
 <h1>Discoveries</h1>
-<p class="lede">What the eval surfaced - pulled out as standalone signal, separate
+<p class="lede">What the eval surfaced, pulled out as standalone signal, separate
 from the methodology in <a href="design.html">Design</a> and the narrative in
 <a href="results.html">Results &amp; Interpretation</a>. Each finding links back to
 its receipt.</p>
@@ -11,7 +11,7 @@ its receipt.</p>
 <h3>1. Every error was the same error</h3>
 <p>On the v0 run (<code>claude-opus-4-7</code>, direct prompt), 11 of 13 clean emails
 were correct. The two misses (E14, E20) were <strong>both</strong> real requests
-collapsed to <code>none</code>. Not scattered noise - one coherent failure shape. That
+collapsed to <code>none</code>. Not scattered noise, one coherent failure shape. That
 single observation drove the whole interpretation and the F9 ("context blindness")
 addition to the taxonomy.</p>
 
@@ -40,20 +40,20 @@ fine-tune at this stage.</p>
 </table>
 <p>Three out of four hit the exact same 0.846 clean accuracy. All four made the same
 E14 -> <code>none</code> miss. Same-family bias was the obvious objection to a
-Claude-labeled, Claude-predicted eval - three independent-family cross-checks
+Claude-labeled, Claude-predicted eval, three independent-family cross-checks
 substantially answer it.</p>
 
 <h3>5. But the per-email patterns diverged</h3>
 <p>Same aggregate accuracy hid real per-item disagreement. E07 only Opus gets right.
 E19 only Llama-4 gets right. E20 only Llama-4 + Qwen get right. The
-<a href="results.html#crosscheck">per-email x per-model grid</a> shows the structure -
+<a href="results.html#crosscheck">per-email x per-model grid</a> shows the structure,
 aggregate metrics lie, the grid doesn't.</p>
 
 <h3>6. 48% of the dataset doesn't fit the 6-label space</h3>
 <p>Of 25 emails: 13 "clean" (one obviously correct label), <strong>7 "ambiguous"</strong>
 (a reasonable person could pick either of two labels), <strong>5 "misfits"</strong>
 (no label in the 6 fits). Almost half. An accuracy score computed against the 6-label
-gold for these rows measures the wrong thing - which is why the eval treats
+gold for these rows measures the wrong thing, which is why the eval treats
 <code>label_fit</code> as a first-class signal and ambiguous rows get acceptable-set
 scoring.</p>
 
@@ -61,7 +61,7 @@ scoring.</p>
 <p>E11, E14, E19 all had <code>thread_so_far</code> AND a <code>Re:</code> subject
 line in the prompt. The predictor passes all of it to the model. The model still
 dropped to <code>none</code>. F1-F8 didn't have a code for "context was present and
-the model ignored it" - so I added F9. The eval surfaced a gap in its own
+the model ignored it", so I added F9. The eval surfaced a gap in its own
 taxonomy.</p>
 
 </main><footer><div class="muted fine">Loyd Applied AI Engineer take-home . Nahuel Borda . 2026</div></footer></body></html>
